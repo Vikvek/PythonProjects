@@ -289,14 +289,15 @@ class PassportApp:
         for p in self.panels:
             p.on_state_reset()
         self.request_render()
+        self._precompute_mask_async()
 
     def _retake(self):
         if self.mode != "webcam":
             self._reset_to("upload")
             return
         self.is_frozen = False
-        self.pipeline.set_source(np.zeros((1, 1, 3), dtype=np.uint8)) if False else None
         self.pipeline.source = None
+        self.pipeline.source_mask = None
         self.capture_btn.state(["!disabled"])
         self.retake_btn.state(["disabled"])
 
@@ -316,14 +317,12 @@ class PassportApp:
         for p in self.panels:
             p.on_state_reset()
         self.request_render()
+        self._precompute_mask_async()
 
     # --- Rendering ---
 
     def request_render(self, heavy: bool = False):
-        """Queue a render. heavy=True allows running rembg in a thread."""
-        if heavy and self.pipeline.state.bg_remove and not self._heavy_render_in_progress:
-            self._render_heavy_async()
-            return
+        """Queue a render. heavy is unused now (mask is precomputed); kept for API compat."""
         if self._render_pending:
             return
         self._render_pending = True
@@ -334,49 +333,53 @@ class PassportApp:
         if self.pipeline.source is None:
             return
 
-        def mask_provider(rotated_rgb):
-            # In-thread call only when we're already in the heavy path.
-            # For inline render, only return cached masks.
-            return None
+        if self.pipeline.state.bg_remove and not self.pipeline.has_mask():
+            # User toggled bg-remove before mask finished. Kick off precompute
+            # if not already running; once it's ready we'll re-render.
+            self._precompute_mask_async()
+            self.busy_var.set("Removing background…")
 
         img = self.pipeline.render_with_overlay(
             self.overlay_rgba,
             self.settings["opacity"] / 100.0,
-            bg_mask_provider=None,
         )
         if img is not None:
             self._show(img)
             self._update_validation()
 
-    def _render_heavy_async(self):
-        if self.pipeline.source is None:
+    def _precompute_mask_async(self):
+        """Run rembg in a background thread, store the mask on the pipeline."""
+        if self.pipeline.source is None or not bgremove.is_available():
+            return
+        if self.pipeline.has_mask() or self._heavy_render_in_progress:
             return
         self._heavy_render_in_progress = True
-        self.busy_var.set("Removing background…")
+        if not self.busy_var.get():
+            self.busy_var.set("Analyzing image…")
+
+        source = self.pipeline.source
+        model = self.settings["rembg_model"]
 
         def work():
-            from pipeline import ImagePipeline as IP
-            angle = self.pipeline.state.angle
-            rotated = IP._rotate(self.pipeline.source, angle)
-            mask = bgremove.alpha_mask(rotated, self.settings["rembg_model"])
+            mask = bgremove.alpha_mask(source, model)
 
             def done():
                 self._heavy_render_in_progress = False
                 self.busy_var.set("")
                 if mask is None:
-                    messagebox.showwarning("Background", "Background removal failed.")
-                    self.pipeline.state.bg_remove = False
                     return
-                key = f"{self.pipeline.source_id()}-{round(angle, 2)}"
-                self.pipeline.cache_mask(key, mask)
-                self.request_render()
+                # Only apply if source hasn't changed since
+                if self.pipeline.source is source:
+                    self.pipeline.set_source_mask(mask)
+                    self.request_render()
 
             self.root.after(0, done)
 
         threading.Thread(target=work, daemon=True).start()
 
     def invalidate_mask_cache(self):
-        self.pipeline._mask_cache.clear()
+        # Mask is per-source (un-rotated); rotation no longer invalidates it.
+        pass
 
     def sync_panels_to_state(self):
         """After programmatic state change (auto-fit), sync widgets."""
@@ -390,7 +393,7 @@ class PassportApp:
     def _update_validation(self):
         if self.pipeline.source is None or not detect.is_available():
             return
-        rendered = self.pipeline.render(bg_mask_provider=None)
+        rendered = self.pipeline.render()
         if rendered is None:
             return
         metrics = detect.detect(rendered)
@@ -400,49 +403,31 @@ class PassportApp:
         out_w, out_h = self.pipeline.output_size
         spec = self.spec
 
-        # Use cached foreground mask if available to get true hair top.
-        # The mask was computed on rotated source at current angle, which
-        # then went through zoom/offset crop — reproject it the same way.
-        true_top_y_in_output = None
-        mask_key = f"{self.pipeline.source_id()}-{round(self.pipeline.state.angle, 2)}"
-        cached = self.pipeline.get_cached_mask(mask_key)
-        if cached is not None:
-            # Render the mask through the same geometric transforms as the image
-            mask_3 = np.dstack([cached, cached, cached])
-            saved_state = (self.pipeline.state.bg_remove,)
-            self.pipeline.state.bg_remove = False
-            mask_rendered = self.pipeline._crop_to_output(mask_3)
-            self.pipeline.state.bg_remove = saved_state[0]
-            mask_2d = mask_rendered[:, :, 0]
-            top_y = detect.find_head_top_y(mask_2d, metrics.face_center_x,
-                                            abs(metrics.right_eye[0] - metrics.left_eye[0]) * 2.5)
+        true_top_y = None
+        mask_in_output = self.pipeline.render_mask_to_output()
+        if mask_in_output is not None:
+            face_w = abs(metrics.right_eye[0] - metrics.left_eye[0]) * 2.5
+            top_y = detect.find_head_top_y(mask_in_output, metrics.face_center_x, face_w)
             if top_y is not None:
-                true_top_y_in_output = top_y
+                true_top_y = top_y
 
-        if true_top_y_in_output is not None:
-            head_top_y = true_top_y_in_output
-        else:
-            head_top_y = metrics.head_top_estimated[1]
-
+        head_top_y = true_top_y if true_top_y is not None else metrics.head_top_estimated[1]
         head_px = metrics.chin[1] - head_top_y
         head_mm = head_px / out_h * spec.photo_h_mm
-
         top_mm = head_top_y / out_h * spec.photo_h_mm
-
-        cx_dev_px = metrics.face_center_x - out_w / 2
-        cx_dev_mm = cx_dev_px / out_w * spec.photo_w_mm
+        cx_dev_mm = (metrics.face_center_x - out_w / 2) / out_w * spec.photo_w_mm
 
         lines = []
         ok_h = spec.head_min_mm <= head_mm <= spec.head_max_mm
         lines.append(f"{'✓' if ok_h else '✗'} Head height: {head_mm:.1f} mm "
                      f"(spec {spec.head_min_mm}-{spec.head_max_mm})")
-        ok_top = spec.top_gap_min_mm <= top_mm <= spec.top_gap_max_mm
+        ok_top = spec.top_gap_mm <= top_mm <= spec.top_gap_mm + spec.crown_band_mm
         lines.append(f"{'✓' if ok_top else '✗'} Top gap: {top_mm:.1f} mm "
-                     f"(spec {spec.top_gap_min_mm}-{spec.top_gap_max_mm})")
+                     f"(spec {spec.top_gap_mm}-{spec.top_gap_mm + spec.crown_band_mm})")
         ok_c = abs(cx_dev_mm) <= spec.horizontal_tolerance_mm
         lines.append(f"{'✓' if ok_c else '✗'} Centered: {cx_dev_mm:+.1f} mm "
                      f"(tol ±{spec.horizontal_tolerance_mm})")
-        method = "hair-top from mask" if true_top_y_in_output is not None else "forehead landmark"
+        method = "hair-top from mask" if true_top_y is not None else "forehead landmark (mask pending)"
         lines.append(f"  measured via: {method}")
         self.validation_var.set("\n".join(lines))
 
@@ -458,7 +443,7 @@ class PassportApp:
         if self.pipeline.source is None:
             messagebox.showerror("Save", "No image to save.")
             return
-        out = self.pipeline.render(bg_mask_provider=None)
+        out = self.pipeline.render()
         if out is None:
             messagebox.showerror("Save", "Render failed.")
             return

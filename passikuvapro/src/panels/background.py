@@ -44,7 +44,7 @@ class BackgroundPanel(Panel):
             self.remove_var.set(False)
             return
         self.app.pipeline.state.bg_remove = bool(self.remove_var.get())
-        self.app.request_render(heavy=True)
+        self.app.request_render()
 
     def _pick_color(self):
         rgb_hex = colorchooser.askcolor(title="Background color")

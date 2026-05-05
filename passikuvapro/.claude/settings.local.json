@@ -9,7 +9,16 @@
       "Bash(\"./venv/Scripts/python.exe\" -c \"import main; import app; import pipeline; import detect; import bgremove; import spec; import settings; from panels.crop import CropPanel; from panels.adjust import AdjustPanel; from panels.background import BackgroundPanel; from panels.auto import AutoPanel; print\\('imports ok'\\)\")",
       "Bash(./venv/Scripts/python.exe -c ' *)",
       "Bash(\"./venv/Scripts/python.exe\" -m pip install \"mediapipe==0.10.21\")",
-      "Bash(\"./venv/Scripts/python.exe\" -m pip install \"numpy>=2.3.0\")"
+      "Bash(\"./venv/Scripts/python.exe\" -m pip install \"numpy>=2.3.0\")",
+      "Bash(py -3.11 -c \"from spec import FINNISH; print\\('photo:', FINNISH.photo_w_mm, 'x', FINNISH.photo_h_mm\\); print\\('head min/max:', FINNISH.head_min_mm, FINNISH.head_max_mm\\); print\\('crown y:', FINNISH.upper_crown_y_mm, '-', FINNISH.lower_crown_y_mm\\); print\\('chin y:', FINNISH.upper_chin_y_mm, '-', FINNISH.lower_chin_y_mm\\); print\\('bottom gap:', FINNISH.bottom_gap_mm\\); from overlay import build_overlay; ov = build_overlay\\(FINNISH, \\(500, 653\\)\\); print\\('overlay shape:', ov.shape, 'nonzero alpha:', \\(ov[:,:,3]>0\\).sum\\(\\)\\)\")",
+      "Bash(mkdir -p src models output)",
+      "Bash(mv app.py pipeline.py spec.py detect.py bgremove.py overlay.py settings.py panels src/)",
+      "Bash(mv face_landmarker.task models/)",
+      "Bash(cp face_landmarker.task models/)",
+      "Bash(rm -f face_landmarker.task)",
+      "Bash(rm -rf __pycache__)",
+      "Bash(mv passport_*.jpg output/)",
+      "Bash(rm -f overlay.png)"
     ]
   }
 }

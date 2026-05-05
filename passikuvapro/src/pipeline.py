@@ -36,12 +36,12 @@ class ImagePipeline:
         self.output_size = output_size  # (w, h)
         self.source: Optional[np.ndarray] = None  # RGB uint8
         self.state = PipelineState()
-        self._mask_cache: dict[str, np.ndarray] = {}
+        self.source_mask: Optional[np.ndarray] = None  # HxW uint8 alpha for un-rotated source
 
     def set_source(self, rgb: np.ndarray) -> None:
         self.source = rgb.copy()
         self.state = PipelineState()
-        self._mask_cache.clear()
+        self.source_mask = None
 
     def set_output_size(self, size: tuple[int, int]) -> None:
         self.output_size = size
@@ -51,11 +51,11 @@ class ImagePipeline:
             return ""
         return hashlib.md5(self.source.tobytes()).hexdigest()[:12]
 
-    def cache_mask(self, key: str, mask: np.ndarray) -> None:
-        self._mask_cache[key] = mask
+    def set_source_mask(self, mask: np.ndarray) -> None:
+        self.source_mask = mask
 
-    def get_cached_mask(self, key: str) -> Optional[np.ndarray]:
-        return self._mask_cache.get(key)
+    def has_mask(self) -> bool:
+        return self.source_mask is not None
 
     # --- transforms ---
 
@@ -126,20 +126,21 @@ class ImagePipeline:
 
     # --- entry points ---
 
-    def render(self, bg_mask_provider=None) -> Optional[np.ndarray]:
+    def _rotated_mask(self) -> Optional[np.ndarray]:
+        """Return source mask rotated by current angle, matching rotated source dims."""
+        if self.source_mask is None:
+            return None
+        return self._rotate(self.source_mask, self.state.angle)
+
+    def render(self) -> Optional[np.ndarray]:
         """Return RGB output_size image, or None if no source."""
         if self.source is None:
             return None
 
         img = self._rotate(self.source, self.state.angle)
 
-        if self.state.bg_remove and bg_mask_provider is not None:
-            mask_key = f"{self.source_id()}-{round(self.state.angle, 2)}"
-            mask = self.get_cached_mask(mask_key)
-            if mask is None:
-                mask = bg_mask_provider(img)
-                if mask is not None:
-                    self.cache_mask(mask_key, mask)
+        if self.state.bg_remove and self.source_mask is not None:
+            mask = self._rotated_mask()
             if mask is not None:
                 rgba = np.dstack([img, mask])
                 img = self._composite_bg(rgba)
@@ -150,9 +151,28 @@ class ImagePipeline:
         img = self._crop_to_output(img)
         return img
 
+    def render_mask_to_output(self) -> Optional[np.ndarray]:
+        """Return the source foreground mask transformed (rotate + crop) to output size.
+
+        Returns HxW uint8, or None if no mask cached.
+        """
+        if self.source_mask is None:
+            return None
+        m = self._rotate(self.source_mask, self.state.angle)
+        # _crop_to_output expects 3-channel; expand and shrink back
+        m3 = np.dstack([m, m, m])
+        # Avoid bg_color padding bleeding into mask: temporarily override
+        saved = self.state.bg_color
+        self.state.bg_color = (0, 0, 0)
+        try:
+            out = self._crop_to_output(m3)
+        finally:
+            self.state.bg_color = saved
+        return out[:, :, 0]
+
     def render_with_overlay(self, overlay_rgba: Optional[np.ndarray],
-                             opacity: float, bg_mask_provider=None) -> Optional[np.ndarray]:
-        base = self.render(bg_mask_provider=bg_mask_provider)
+                             opacity: float) -> Optional[np.ndarray]:
+        base = self.render()
         if base is None or overlay_rgba is None:
             return base
         ov = cv2.resize(overlay_rgba, (base.shape[1], base.shape[0]),

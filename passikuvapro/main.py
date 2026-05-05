@@ -1,8 +1,13 @@
 """Passikuva Pro entry point."""
 
+import os
+import sys
 import tkinter as tk
 
-from app import PassportApp
+ROOT = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.join(ROOT, "src"))
+
+from app import PassportApp  # noqa: E402
 
 
 def main():

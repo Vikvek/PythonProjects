@@ -58,17 +58,19 @@ class AutoPanel(Panel):
         rembg_model = self.app.settings["rembg_model"]
 
         def work():
-            rotated = ImagePipeline._rotate(source, angle)
-            mask = None
-            if bgremove.is_available():
-                mask = bgremove.alpha_mask(rotated, rembg_model)
+            mask = self.app.pipeline.source_mask
+            if mask is None and bgremove.is_available():
+                mask = bgremove.alpha_mask(source, rembg_model)
+
+            rotated_src = ImagePipeline._rotate(source, angle)
+            rotated_mask = ImagePipeline._rotate(mask, angle) if mask is not None else None
 
             result = detect.compute_autofit(
-                rotated, out_size,
+                rotated_src, out_size,
                 spec_target_head_ratio=spec.head_target_ratio(),
-                spec_top_gap_ratio=spec.top_gap_ratio(),
+                spec_top_gap_ratio=spec.top_gap_target_ratio(),
                 current_angle=angle,
-                foreground_mask=mask,
+                foreground_mask=rotated_mask,
             )
 
             def done():
@@ -77,20 +79,14 @@ class AutoPanel(Panel):
                     messagebox.showwarning("Auto-fit", "No face detected in image.")
                     return
 
-                # Cache mask for current angle so bg-remove path reuses it
-                if mask is not None:
-                    key = f"{self.app.pipeline.source_id()}-{round(angle, 2)}"
-                    self.app.pipeline.cache_mask(key, mask)
+                if mask is not None and self.app.pipeline.source is source:
+                    self.app.pipeline.set_source_mask(mask)
 
-                # Apply
                 new_angle = self.app.pipeline.state.angle + result.angle_delta
                 self.app.pipeline.state.angle = round(new_angle, 2)
                 self.app.pipeline.state.zoom = result.zoom
                 self.app.pipeline.state.offset_x = result.offset_x
                 self.app.pipeline.state.offset_y = result.offset_y
-                # New angle invalidates the mask cache for old angle
-                if abs(result.angle_delta) > 0.05:
-                    self.app.invalidate_mask_cache()
                 self.app.sync_panels_to_state()
                 self.app.request_render()
                 self.status_var.set(

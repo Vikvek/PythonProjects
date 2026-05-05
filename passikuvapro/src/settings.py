@@ -4,10 +4,12 @@ import json
 import os
 from typing import Any
 
-SETTINGS_FILE = "settings.json"
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+SETTINGS_FILE = os.path.join(ROOT, "settings.json")
+DEFAULT_OUTPUT_DIR = os.path.join(ROOT, "output")
 
 DEFAULTS: dict[str, Any] = {
-    "overlay_path": "overlay.png",
+    "overlay_path": "",
     "use_generated_overlay": True,
     "opacity": 70,
     "output_size": [500, 653],
@@ -31,7 +33,8 @@ def load() -> dict[str, Any]:
         except (json.JSONDecodeError, OSError):
             pass
     if not settings["output_folder"]:
-        settings["output_folder"] = os.getcwd()
+        settings["output_folder"] = DEFAULT_OUTPUT_DIR
+    os.makedirs(settings["output_folder"], exist_ok=True)
     save(settings)
     return settings
 

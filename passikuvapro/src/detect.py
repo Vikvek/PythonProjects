@@ -61,7 +61,10 @@ _init_failed = False
 
 def _model_path() -> str:
     here = os.path.dirname(os.path.abspath(__file__))
-    return os.path.join(here, MODEL_FILE)
+    root = os.path.dirname(here)
+    models_dir = os.path.join(root, "models")
+    os.makedirs(models_dir, exist_ok=True)
+    return os.path.join(models_dir, MODEL_FILE)
 
 
 def _ensure_model() -> Optional[str]:
