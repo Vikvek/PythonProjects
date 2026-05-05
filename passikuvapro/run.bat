@@ -1,6 +1,4 @@
 @echo off
-python -m venv venv
-call venv\Scripts\activate
-pip install opencv-python pillow
-echo Run using: python main.py
+python -m pip install -r requirements.txt
+python main.py
 pause

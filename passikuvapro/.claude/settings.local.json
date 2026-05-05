@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:lupakuvienvastaanotto.fi)",
+      "WebFetch(domain:www.lupakuvienvastaanotto.fi)",
+      "WebSearch",
+      "Bash(\"C:/Users/valts/OneDrive/Documents/GitHub/PythonProjects/passikuvapro/venv/Scripts/python.exe\" -m pip list)",
+      "Bash(\"C:/Users/valts/OneDrive/Documents/GitHub/PythonProjects/passikuvapro/venv/Scripts/python.exe\" -m pip install --upgrade pip opencv-python pillow numpy mediapipe rembg onnxruntime)",
+      "Bash(\"./venv/Scripts/python.exe\" -c \"import main; import app; import pipeline; import detect; import bgremove; import spec; import settings; from panels.crop import CropPanel; from panels.adjust import AdjustPanel; from panels.background import BackgroundPanel; from panels.auto import AutoPanel; print\\('imports ok'\\)\")",
+      "Bash(./venv/Scripts/python.exe -c ' *)",
+      "Bash(\"./venv/Scripts/python.exe\" -m pip install \"mediapipe==0.10.21\")",
+      "Bash(\"./venv/Scripts/python.exe\" -m pip install \"numpy>=2.3.0\")"
+    ]
+  }
+}
